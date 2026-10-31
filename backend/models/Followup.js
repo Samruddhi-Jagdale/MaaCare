@@ -1,4 +1,7 @@
 // models/Followup.js
+// NOTE: This model is unused and orphaned as of the MaaCare v2 refactor.
+// Follow-up dates and notes are stored in Checkup.js fields: nextFollowUpDate, followUpNotes.
+// This file is retained for reference only and should NOT be imported or used.
 const mongoose = require('mongoose');
 
 const FollowupSchema = new mongoose.Schema({

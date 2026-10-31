@@ -1,11 +1,13 @@
 // src/App.jsx
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { LanguageProvider } from './context/LanguageContext';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import AdminDashboard from './pages/AdminDashboard';
 import WorkerDashboard from './pages/WorkerDashboard';
 import WomanDashboard from './pages/WomanDashboard';
+import Education from './pages/Education';
 import ProtectedRoute from './components/ProtectedRoute';
 import Home from './pages/Home';
 
@@ -13,6 +15,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
+      <Route path="/education" element={<Education />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route
@@ -47,9 +50,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <Router>
-        <AppRoutes />
-      </Router>
+      <LanguageProvider>
+        <Router>
+          <AppRoutes />
+        </Router>
+      </LanguageProvider>
     </AuthProvider>
   );
 }

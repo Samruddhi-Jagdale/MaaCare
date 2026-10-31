@@ -1,6 +1,6 @@
 // src/context/AuthContext.jsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../services/api';
 
 const AuthContext = createContext();
 
@@ -14,7 +14,6 @@ export const AuthProvider = ({ children }) => {
       const token = localStorage.getItem('token');
       const storedUser = localStorage.getItem('user');
       if (token && storedUser) {
-        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         setUser(JSON.parse(storedUser));
       }
     } catch (e) {
@@ -26,20 +25,19 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (email, password) => {
-    const { data } = await axios.post('http://localhost:5001/api/auth/login', {
+    const { data } = await api.post('/api/auth/login', {
       email: email.trim().toLowerCase(),
       password,
     });
     const { token, ...userData } = data;
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(userData));
-    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     setUser(userData);
     return userData;
   };
 
   const register = async (name, email, phone, password) => {
-    const { data } = await axios.post('http://localhost:5001/api/auth/register', {
+    const { data } = await api.post('/api/auth/register', {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       phone: phone ? phone.trim() : '',
@@ -49,7 +47,6 @@ export const AuthProvider = ({ children }) => {
     const { token, ...userData } = data;
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(userData));
-    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     setUser(userData);
     return userData;
   };
@@ -57,7 +54,6 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    delete axios.defaults.headers.common['Authorization'];
     setUser(null);
   };
 

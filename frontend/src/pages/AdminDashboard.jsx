@@ -1,12 +1,32 @@
 // src/pages/AdminDashboard.jsx
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
+import {
+  Users,
+  Calendar,
+  AlertCircle,
+  CheckCircle2,
+  Download,
+  Search,
+  Plus,
+  Trash2,
+  Activity,
+  Send,
+  PieChart,
+  TrendingUp,
+  FileText,
+  Shield,
+  ShieldCheck,
+  ShieldAlert,
+  X,
+} from 'lucide-react';
+import Navbar from '../components/Navbar';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
-const AdminDashboard = () => {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+export default function AdminDashboard() {
+  const { user } = useAuth();
+  const { t, language } = useLanguage();
 
   const [stats, setStats] = useState({
     totalWomen: 0,
@@ -15,9 +35,14 @@ const AdminDashboard = () => {
     upcomingCheckups: 0,
     overdueCheckups: 0,
     completedCheckups: 0,
+    missedCheckups: 0,
+    cancelledCheckups: 0,
     totalCheckups: 0,
     workload: [],
+    trends: [],
+    trimesterDistribution: { trimester1: 0, trimester2: 0, trimester3: 0, unspecified: 0 },
   });
+
   const [women, setWomen] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [womenUsers, setWomenUsers] = useState([]);
@@ -25,10 +50,18 @@ const AdminDashboard = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Active Tab: 'overview' | 'women' | 'workers'
+  const [activeTab, setActiveTab] = useState('overview');
+
   // Search & Filter
   const [womanSearch, setWomanSearch] = useState('');
   const [workerSearch, setWorkerSearch] = useState('');
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'women' | 'workers'
+  const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
+
+  // Broadcast Announcement Modal State
+  const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+  const [broadcastForm, setBroadcastForm] = useState({ title: '', message: '', targetRole: 'all' });
+  const [broadcasting, setBroadcasting] = useState(false);
 
   // Forms
   const [newWorkerForm, setNewWorkerForm] = useState({ name: '', email: '', phone: '', password: '' });
@@ -48,15 +81,24 @@ const AdminDashboard = () => {
     fetchDashboardData();
   }, []);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (dateParams = {}) => {
     try {
       setLoading(true);
+      setError('');
+
+      let statsUrl = '/api/admin/stats';
+      const params = new URLSearchParams();
+      if (dateParams.startDate) params.append('startDate', dateParams.startDate);
+      if (dateParams.endDate) params.append('endDate', dateParams.endDate);
+      if (params.toString()) statsUrl += `?${params.toString()}`;
+
       const [statsRes, womenRes, workersRes, usersRes] = await Promise.all([
-        axios.get('http://localhost:5001/api/admin/stats'),
-        axios.get('http://localhost:5001/api/admin/women'),
-        axios.get('http://localhost:5001/api/admin/workers'),
-        axios.get('http://localhost:5001/api/admin/women-users'),
+        api.get(statsUrl),
+        api.get('/api/admin/women'),
+        api.get('/api/admin/workers'),
+        api.get('/api/admin/women-users'),
       ]);
+
       setStats(statsRes.data);
       setWomen(womenRes.data);
       setWorkers(workersRes.data);
@@ -69,15 +111,58 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleApplyDateFilter = (e) => {
+    e.preventDefault();
+    fetchDashboardData(dateRange);
+  };
+
+  const handleResetDateFilter = () => {
+    setDateRange({ startDate: '', endDate: '' });
+    fetchDashboardData({});
+  };
+
+  const handleExportCSV = async (type) => {
+    try {
+      const endpoint = type === 'women' ? '/api/admin/export/women' : '/api/admin/export/checkups';
+      const res = await api.get(endpoint, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `maacare_${type}_report.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setSuccess(`Exported ${type} report successfully!`);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to download CSV export.');
+    }
+  };
+
+  const handleBroadcast = async (e) => {
+    e.preventDefault();
+    setBroadcasting(true);
+    try {
+      const res = await api.post('/api/notifications/broadcast', broadcastForm);
+      setSuccess(res.data.message);
+      setShowBroadcastModal(false);
+      setBroadcastForm({ title: '', message: '', targetRole: 'all' });
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to dispatch broadcast');
+    } finally {
+      setBroadcasting(false);
+    }
+  };
+
   const handleCreateWorker = async (e) => {
     e.preventDefault();
     setError('');
     setSuccess('');
     try {
-      await axios.post('http://localhost:5001/api/admin/workers', newWorkerForm);
-      setSuccess(`Health Worker "${newWorkerForm.name}" created successfully with secure credentials.`);
+      await api.post('/api/admin/workers', newWorkerForm);
+      setSuccess(`Health Worker "${newWorkerForm.name}" created successfully.`);
       setNewWorkerForm({ name: '', email: '', phone: '', password: '' });
-      fetchDashboardData();
+      fetchDashboardData(dateRange);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to create worker account');
     }
@@ -85,13 +170,13 @@ const AdminDashboard = () => {
 
   const handleToggleWorkerStatus = async (worker) => {
     const action = worker.isActive ? 'deactivate' : 'reactivate';
-    if (!window.confirm(`Are you sure you want to ${action} ${worker.name}'s account? Patient records will remain safe.`)) return;
+    if (!window.confirm(`Are you sure you want to ${action} ${worker.name}'s account?`)) return;
     setError('');
     setSuccess('');
     try {
-      const res = await axios.patch(`http://localhost:5001/api/admin/workers/${worker._id}/toggle-status`);
+      const res = await api.patch(`/api/admin/workers/${worker._id}/toggle-status`);
       setSuccess(res.data.message);
-      fetchDashboardData();
+      fetchDashboardData(dateRange);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to update worker status');
     }
@@ -102,7 +187,7 @@ const AdminDashboard = () => {
     setError('');
     setSuccess('');
     try {
-      await axios.post('http://localhost:5001/api/admin/women', newWomanForm);
+      await api.post('/api/admin/women', newWomanForm);
       setSuccess('Maternal healthcare clinical record enrolled successfully!');
       setNewWomanForm({
         name: '',
@@ -115,7 +200,7 @@ const AdminDashboard = () => {
         bloodGroup: 'B+',
         assignedWorker: '',
       });
-      fetchDashboardData();
+      fetchDashboardData(dateRange);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to create maternal record');
     }
@@ -123,28 +208,23 @@ const AdminDashboard = () => {
 
   const handleAssignWorker = async (womanId, workerId) => {
     try {
-      await axios.post(`http://localhost:5001/api/admin/women/${womanId}/assign/${workerId}`);
+      await api.post(`/api/admin/women/${womanId}/assign/${workerId}`);
       setSuccess('Health worker assignment updated!');
-      fetchDashboardData();
+      fetchDashboardData(dateRange);
     } catch (err) {
       setError(err.response?.data?.message || 'Assignment failed');
     }
   };
 
   const handleDeleteWoman = async (womanId, name) => {
-    if (!window.confirm(`Are you sure you want to remove the record for "${name}"? This will also remove associated checkup records.`)) return;
+    if (!window.confirm(`Are you sure you want to remove the record for "${name}"?`)) return;
     try {
-      await axios.delete(`http://localhost:5001/api/admin/women/${womanId}`);
+      await api.delete(`/api/admin/women/${womanId}`);
       setSuccess('Maternal record removed successfully.');
-      fetchDashboardData();
+      fetchDashboardData(dateRange);
     } catch (err) {
       setError('Failed to delete maternal record');
     }
-  };
-
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
   };
 
   const filteredWomen = women.filter((w) =>
@@ -159,534 +239,702 @@ const AdminDashboard = () => {
   );
 
   return (
-    <div className="min-h-screen bg-pink-50/40 font-sans text-gray-800">
-      {/* Top Navbar */}
-      <nav className="bg-white border-b border-pink-100 shadow-sm sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <Link to="/" className="text-2xl font-black text-pink-600">
-              Maa<span className="text-teal-600">Care</span>
-            </Link>
-            <span className="text-xs bg-purple-100 text-purple-800 font-semibold px-2 py-0.5 rounded-full">
-              System Admin Portal
+    <div className="min-h-screen bg-pink-50/40 text-gray-800 pb-16">
+      <Navbar />
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
+        {/* Top Header & Quick Actions */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-pink-100 shadow-sm">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 bg-purple-100 px-3 py-1 rounded-full">
+              System Administration & Surveillance
             </span>
+            <h1 className="text-2xl sm:text-3xl font-black text-gray-900 mt-1">
+              Maternal Health Surveillance Console
+            </h1>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Live district monitoring, health worker allocation, and programmatic reporting
+            </p>
           </div>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm font-medium text-gray-700 hidden sm:inline">
-              Signed in as <span className="text-pink-700 font-bold">{user?.name}</span>
-            </span>
+
+          {/* Export & Broadcast Action Buttons */}
+          <div className="flex flex-wrap gap-2">
             <button
-              onClick={handleLogout}
-              className="px-3.5 py-1.5 text-sm font-medium text-white bg-pink-600 hover:bg-pink-700 rounded-lg shadow-sm transition"
+              onClick={() => handleExportCSV('women')}
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold hover:bg-gray-50 shadow-2xs transition"
             >
-              Logout
+              <Download className="w-3.5 h-3.5 text-teal-600" />
+              <span>Export Mothers (CSV)</span>
+            </button>
+            <button
+              onClick={() => handleExportCSV('checkups')}
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold hover:bg-gray-50 shadow-2xs transition"
+            >
+              <Download className="w-3.5 h-3.5 text-pink-600" />
+              <span>Export Visits (CSV)</span>
+            </button>
+            <button
+              onClick={() => setShowBroadcastModal(true)}
+              className="flex items-center space-x-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-sm transition"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Broadcast Announcement</span>
             </button>
           </div>
         </div>
-      </nav>
 
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        {/* Analytics Top Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          <div className="bg-white p-4 rounded-2xl border border-pink-100 shadow-sm">
-            <p className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">Mothers Enrolled</p>
-            <h3 className="text-2xl sm:text-3xl font-black text-pink-600 mt-1">{stats.totalWomen}</h3>
-            <span className="text-[11px] text-gray-400">Total clinical files</span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-teal-100 shadow-sm">
-            <p className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">Active Workers</p>
-            <h3 className="text-2xl sm:text-3xl font-black text-teal-600 mt-1">{stats.totalWorkers}</h3>
-            <span className="text-[11px] text-gray-400">{stats.inactiveWorkers || 0} deactivated</span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-purple-100 shadow-sm">
-            <p className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">Upcoming Visits</p>
-            <h3 className="text-2xl sm:text-3xl font-black text-purple-600 mt-1">{stats.upcomingCheckups}</h3>
-            <span className="text-[11px] text-purple-600 font-medium">Scheduled checkups</span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-amber-100 shadow-sm">
-            <p className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">Overdue Follow-ups</p>
-            <h3 className="text-2xl sm:text-3xl font-black text-amber-600 mt-1">{stats.overdueCheckups}</h3>
-            <span className="text-[11px] text-amber-600 font-medium">Require worker outreach</span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-green-100 shadow-sm col-span-2 lg:col-span-1">
-            <p className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">Completed Care</p>
-            <h3 className="text-2xl sm:text-3xl font-black text-green-600 mt-1">{stats.completedCheckups}</h3>
-            <span className="text-[11px] text-gray-400">Recorded checkups</span>
-          </div>
-        </div>
-
+        {/* Global Notifications */}
         {error && (
-          <div className="p-3 text-sm bg-red-50 border border-red-200 text-red-700 rounded-xl">
-            {error}
+          <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-2xl text-xs flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="font-bold text-rose-800">Dismiss</button>
           </div>
         )}
         {success && (
-          <div className="p-3 text-sm bg-green-50 border border-green-200 text-green-700 rounded-xl">
-            {success}
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl text-xs flex items-center justify-between">
+            <span>{success}</span>
+            <button onClick={() => setSuccess('')} className="font-bold text-emerald-900">Dismiss</button>
           </div>
         )}
 
+        {/* Date Filter Bar */}
+        <form
+          onSubmit={handleApplyDateFilter}
+          className="bg-white p-4 rounded-2xl border border-gray-100 flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <div className="flex items-center space-x-2">
+            <Calendar className="w-4 h-4 text-gray-400" />
+            <span className="font-bold text-gray-700">Analytics Date Filter:</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="date"
+              value={dateRange.startDate}
+              onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
+              className="px-2.5 py-1.5 border border-gray-200 rounded-xl text-xs"
+            />
+            <span className="text-gray-400">to</span>
+            <input
+              type="date"
+              value={dateRange.endDate}
+              onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
+              className="px-2.5 py-1.5 border border-gray-200 rounded-xl text-xs"
+            />
+            <button
+              type="submit"
+              className="px-3.5 py-1.5 bg-gray-800 text-white rounded-xl font-bold hover:bg-gray-900 transition"
+            >
+              Apply Filter
+            </button>
+            {(dateRange.startDate || dateRange.endDate) && (
+              <button
+                type="button"
+                onClick={handleResetDateFilter}
+                className="px-3 py-1.5 border border-gray-200 text-gray-600 rounded-xl font-bold hover:bg-gray-50"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </form>
+
+        {/* Top 5 High-Impact Metric Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="bg-white rounded-3xl p-5 border border-pink-100 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Enrolled Mothers</p>
+            <p className="text-3xl font-black text-pink-600 mt-1">{stats.totalWomen}</p>
+            <p className="text-[10px] text-gray-400 mt-1">Active maternal cards</p>
+          </div>
+
+          <div className="bg-white rounded-3xl p-5 border border-teal-100 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Active Health Workers</p>
+            <p className="text-3xl font-black text-teal-600 mt-1">{stats.totalWorkers}</p>
+            <p className="text-[10px] text-teal-700 mt-1">{stats.inactiveWorkers} inactive</p>
+          </div>
+
+          <div className="bg-white rounded-3xl p-5 border border-blue-100 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Upcoming Visits</p>
+            <p className="text-3xl font-black text-blue-600 mt-1">{stats.upcomingCheckups}</p>
+            <p className="text-[10px] text-gray-400 mt-1">Scheduled next 30 days</p>
+          </div>
+
+          <div className="bg-white rounded-3xl p-5 border border-amber-100 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Overdue Follow-ups</p>
+            <p className="text-3xl font-black text-amber-600 mt-1">{stats.overdueCheckups}</p>
+            <p className="text-[10px] text-amber-800 font-medium mt-1">Require immediate worker visit</p>
+          </div>
+
+          <div className="bg-white rounded-3xl p-5 border border-emerald-100 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Completed Checkups</p>
+            <p className="text-3xl font-black text-emerald-600 mt-1">{stats.completedCheckups}</p>
+            <p className="text-[10px] text-emerald-700 mt-1">Successful care delivery</p>
+          </div>
+        </div>
+
+        {/* Trimester Distribution & Trends Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Trimester Distribution */}
+          <div className="lg:col-span-5 bg-white rounded-3xl p-6 border border-pink-100 shadow-sm space-y-4">
+            <div className="flex items-center space-x-2 pb-2 border-b border-gray-100">
+              <PieChart className="w-5 h-5 text-pink-600" />
+              <h3 className="font-bold text-sm text-gray-800">Trimester Distribution of Enrolled Mothers</h3>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span className="text-teal-700">1st Trimester (Weeks 1-12)</span>
+                  <span>{stats.trimesterDistribution?.trimester1 || 0} mothers</span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2">
+                  <div
+                    className="bg-teal-500 h-2 rounded-full"
+                    style={{
+                      width: `${Math.min(100, ((stats.trimesterDistribution?.trimester1 || 0) / Math.max(1, stats.totalWomen)) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span className="text-pink-700">2nd Trimester (Weeks 13-26)</span>
+                  <span>{stats.trimesterDistribution?.trimester2 || 0} mothers</span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2">
+                  <div
+                    className="bg-pink-500 h-2 rounded-full"
+                    style={{
+                      width: `${Math.min(100, ((stats.trimesterDistribution?.trimester2 || 0) / Math.max(1, stats.totalWomen)) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span className="text-purple-700">3rd Trimester (Weeks 27-40+)</span>
+                  <span>{stats.trimesterDistribution?.trimester3 || 0} mothers</span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2">
+                  <div
+                    className="bg-purple-500 h-2 rounded-full"
+                    style={{
+                      width: `${Math.min(100, ((stats.trimesterDistribution?.trimester3 || 0) / Math.max(1, stats.totalWomen)) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 6-Month Real Aggregate Monthly Trend */}
+          <div className="lg:col-span-7 bg-white rounded-3xl p-6 border border-pink-100 shadow-sm space-y-4">
+            <div className="flex items-center space-x-2 pb-2 border-b border-gray-100">
+              <TrendingUp className="w-5 h-5 text-teal-600" />
+              <h3 className="font-bold text-sm text-gray-800">6-Month Service Delivery Activity</h3>
+            </div>
+
+            <div className="grid grid-cols-6 gap-2 text-center text-xs pt-4">
+              {stats.trends?.map((tItem, idx) => (
+                <div key={idx} className="flex flex-col items-center">
+                  <div className="flex items-end space-x-1 h-28 w-full justify-center">
+                    {/* Checkups Bar */}
+                    <div
+                      className="w-3 bg-teal-500 rounded-t-md transition-all duration-500"
+                      style={{ height: `${Math.min(100, tItem.checkups * 10 + 8)}%` }}
+                      title={`${tItem.checkups} checkups`}
+                    />
+                    {/* Mothers Bar */}
+                    <div
+                      className="w-3 bg-pink-400 rounded-t-md transition-all duration-500"
+                      style={{ height: `${Math.min(100, tItem.newMothers * 15 + 8)}%` }}
+                      title={`${tItem.newMothers} new mothers`}
+                    />
+                  </div>
+                  <span className="font-bold text-gray-700 mt-2 text-[11px]">{tItem.month}</span>
+                  <span className="text-[10px] text-gray-400">{tItem.checkups} visits</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-center space-x-4 pt-2 text-[11px] text-gray-500">
+              <span className="flex items-center">
+                <span className="w-2.5 h-2.5 bg-teal-500 rounded-xs inline-block mr-1" />
+                Antenatal Checkups
+              </span>
+              <span className="flex items-center">
+                <span className="w-2.5 h-2.5 bg-pink-400 rounded-xs inline-block mr-1" />
+                Enrolled Mothers
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Tab Navigation */}
-        <div className="flex border-b border-gray-200 space-x-6 text-sm font-semibold">
+        <div className="flex border-b border-gray-200 space-x-4">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`pb-3 transition ${
+            className={`pb-3 text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
               activeTab === 'overview'
-                ? 'border-b-2 border-purple-600 text-purple-700'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'border-purple-600 text-purple-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
             }`}
           >
-            Worker Workload Analytics
+            <Activity className="w-4 h-4" />
+            <span>Health Worker Caseload Analytics</span>
           </button>
+
           <button
             onClick={() => setActiveTab('women')}
-            className={`pb-3 transition ${
+            className={`pb-3 text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
               activeTab === 'women'
-                ? 'border-b-2 border-pink-600 text-pink-700'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'border-pink-600 text-pink-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
             }`}
           >
-            Maternal Health Profiles ({women.length})
+            <Users className="w-4 h-4" />
+            <span>Maternal Health Profiles ({women.length})</span>
           </button>
+
           <button
             onClick={() => setActiveTab('workers')}
-            className={`pb-3 transition ${
+            className={`pb-3 text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
               activeTab === 'workers'
-                ? 'border-b-2 border-teal-600 text-teal-700'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'border-teal-600 text-teal-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
             }`}
           >
-            Health Workers ({workers.length})
+            <Shield className="w-4 h-4" />
+            <span>Health Worker Accounts ({workers.length})</span>
           </button>
         </div>
 
-        {/* TAB 1: WORKLOAD ANALYTICS */}
+        {/* TAB 1: Workload Analytics */}
         {activeTab === 'overview' && (
-          <div className="bg-white rounded-2xl border border-purple-100 shadow-sm p-6 space-y-4">
-            <div>
-              <h3 className="text-base font-bold text-gray-900">Health Worker Workload Distribution</h3>
-              <p className="text-xs text-gray-500">
-                Live metrics derived from actual assigned patient counts and active appointment queues.
-              </p>
+          <div className="bg-white rounded-3xl p-6 border border-pink-100 shadow-sm space-y-4">
+            <h3 className="font-bold text-gray-900 text-base">Community Health Worker Workload Distribution</h3>
+            <p className="text-xs text-gray-500">
+              Balanced caseload tracking: Assigned mothers, pending visits, and overdue follow-ups
+            </p>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-gray-50 text-gray-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-3">Worker Name</th>
+                    <th className="p-3">Email & Phone</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3 text-center">Assigned Mothers</th>
+                    <th className="p-3 text-center">Pending Visits</th>
+                    <th className="p-3 text-center">Completed Visits</th>
+                    <th className="p-3 text-center">Overdue Visits</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {stats.workload?.map((w) => (
+                    <tr key={w._id} className="hover:bg-gray-50">
+                      <td className="p-3 font-bold text-gray-900">{w.name}</td>
+                      <td className="p-3 text-gray-600">
+                        <div>{w.email}</div>
+                        <div className="text-[10px] text-gray-400">{w.phone || 'No phone'}</div>
+                      </td>
+                      <td className="p-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                            w.isActive ? 'bg-teal-100 text-teal-800' : 'bg-gray-200 text-gray-600'
+                          }`}
+                        >
+                          {w.isActive ? 'Active' : 'Deactivated'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center font-bold text-teal-800">{w.assignedWomenCount}</td>
+                      <td className="p-3 text-center font-bold text-blue-700">{w.pendingAppointments}</td>
+                      <td className="p-3 text-center font-bold text-emerald-700">{w.completedVisits || 0}</td>
+                      <td className="p-3 text-center font-bold text-amber-700">{w.overdueVisits || 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: Maternal Profiles */}
+        {activeTab === 'women' && (
+          <div className="space-y-6">
+            {/* Enroll New Mother Form */}
+            <div className="bg-white rounded-3xl p-6 border border-pink-100 shadow-sm space-y-4">
+              <h3 className="font-bold text-gray-900 text-sm">Enroll New Maternal Clinical Profile</h3>
+
+              <form onSubmit={handleCreateWoman} className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block text-gray-600 font-bold mb-1">Select Registered User *</label>
+                  <select
+                    required
+                    value={newWomanForm.userId}
+                    onChange={(e) => {
+                      const sel = womenUsers.find((u) => u._id === e.target.value);
+                      setNewWomanForm({
+                        ...newWomanForm,
+                        userId: e.target.value,
+                        name: sel ? sel.name : '',
+                        phone: sel ? sel.phone : '',
+                      });
+                    }}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  >
+                    <option value="">-- Choose User Account --</option>
+                    {womenUsers.map((u) => (
+                      <option key={u._id} value={u._id}>
+                        {u.name} ({u.email})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-gray-600 font-bold mb-1">Maternal Age *</label>
+                  <input
+                    type="number"
+                    required
+                    min="14"
+                    max="60"
+                    placeholder="e.g. 25"
+                    value={newWomanForm.age}
+                    onChange={(e) => setNewWomanForm({ ...newWomanForm, age: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-600 font-bold mb-1">Blood Group *</label>
+                  <select
+                    value={newWomanForm.bloodGroup}
+                    onChange={(e) => setNewWomanForm({ ...newWomanForm, bloodGroup: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  >
+                    {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
+                      <option key={bg} value={bg}>{bg}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-gray-600 font-bold mb-1">Gestation Week</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="42"
+                    placeholder="e.g. 16"
+                    value={newWomanForm.pregnancyWeek}
+                    onChange={(e) => setNewWomanForm({ ...newWomanForm, pregnancyWeek: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-600 font-bold mb-1">Expected Delivery Date (EDD)</label>
+                  <input
+                    type="date"
+                    value={newWomanForm.expectedDeliveryDate}
+                    onChange={(e) => setNewWomanForm({ ...newWomanForm, expectedDeliveryDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-600 font-bold mb-1">Assign Health Worker</label>
+                  <select
+                    value={newWomanForm.assignedWorker}
+                    onChange={(e) => setNewWomanForm({ ...newWomanForm, assignedWorker: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  >
+                    <option value="">-- Unassigned --</option>
+                    {workers.filter((w) => w.isActive).map((w) => (
+                      <option key={w._id} value={w._id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="sm:col-span-3 flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-pink-600 hover:bg-pink-700 text-white font-bold rounded-xl shadow-sm"
+                  >
+                    Enroll Mother Clinical Profile
+                  </button>
+                </div>
+              </form>
             </div>
 
-            {stats.workload && stats.workload.length > 0 ? (
+            {/* Enrolled Mothers Directory Table with Search & Inline Assignment */}
+            <div className="bg-white rounded-3xl p-6 border border-pink-100 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                <h3 className="font-bold text-gray-900 text-base">Enrolled Mothers Directory</h3>
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    placeholder="Search name, phone..."
+                    value={womanSearch}
+                    onChange={(e) => setWomanSearch(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-xs border border-gray-200 rounded-xl"
+                  />
+                </div>
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-gray-50 text-gray-600 border-b border-gray-100">
+                  <thead className="bg-gray-50 text-gray-500 uppercase font-semibold">
                     <tr>
-                      <th className="p-3">Worker Name</th>
-                      <th className="p-3">Contact</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3 text-center">Assigned Mothers</th>
-                      <th className="p-3 text-center">Pending / Overdue Visits</th>
-                      <th className="p-3 text-right">Workload Level</th>
+                      <th className="p-3">Mother Name</th>
+                      <th className="p-3">Age & Blood Group</th>
+                      <th className="p-3">Gestation / EDD</th>
+                      <th className="p-3">Contact & Address</th>
+                      <th className="p-3">Assigned Worker</th>
+                      <th className="p-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {stats.workload.map((wk) => (
-                      <tr key={wk._id} className="hover:bg-purple-50/20 transition">
-                        <td className="p-3 font-semibold text-gray-900">
-                          👩‍⚕️ {wk.name}
-                        </td>
-                        <td className="p-3 text-gray-500">
-                          {wk.email} {wk.phone ? `• ${wk.phone}` : ''}
+                    {filteredWomen.map((w) => (
+                      <tr key={w._id} className="hover:bg-gray-50">
+                        <td className="p-3 font-bold text-gray-900">{w.name}</td>
+                        <td className="p-3">
+                          {w.age} yrs &bull; <span className="font-bold text-pink-700">{w.bloodGroup}</span>
                         </td>
                         <td className="p-3">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              wk.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'
-                            }`}
+                          <span className="font-semibold text-purple-700">Week {w.pregnancyWeek || '—'}</span>
+                          <div className="text-[10px] text-gray-400">
+                            EDD: {w.expectedDeliveryDate ? new Date(w.expectedDeliveryDate).toLocaleDateString() : '—'}
+                          </div>
+                        </td>
+                        <td className="p-3 text-gray-600">
+                          <div>{w.phone}</div>
+                          <div className="text-[10px] text-gray-400 truncate max-w-[150px]">{w.address || '—'}</div>
+                        </td>
+                        <td className="p-3">
+                          <select
+                            value={w.assignedWorker?._id || 'unassigned'}
+                            onChange={(e) => handleAssignWorker(w._id, e.target.value)}
+                            className="px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white"
                           >
-                            {wk.isActive ? 'ACTIVE' : 'DEACTIVATED'}
-                          </span>
-                        </td>
-                        <td className="p-3 text-center font-bold text-teal-700 text-sm">
-                          {wk.assignedWomenCount}
-                        </td>
-                        <td className="p-3 text-center font-bold text-amber-700 text-sm">
-                          {wk.pendingAppointments}
+                            <option value="unassigned">-- Unassigned --</option>
+                            {workers.filter((wk) => wk.isActive).map((wk) => (
+                              <option key={wk._id} value={wk._id}>{wk.name}</option>
+                            ))}
+                          </select>
                         </td>
                         <td className="p-3 text-right">
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                              wk.assignedWomenCount > 5
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-teal-50 text-teal-700'
-                            }`}
+                          <button
+                            onClick={() => handleDeleteWoman(w._id, w.name)}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="Delete Record"
                           >
-                            {wk.assignedWomenCount > 5 ? 'High Demand' : 'Balanced'}
-                          </span>
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            ) : (
-              <p className="text-xs text-gray-400 text-center py-6">No worker workload records available.</p>
-            )}
-          </div>
-        )}
-
-        {/* TAB 2: MATERNAL RECORDS CRUD */}
-        {activeTab === 'women' && (
-          <div className="space-y-6">
-            {/* Enroll Woman Form */}
-            <div className="bg-white rounded-2xl p-6 border border-pink-100 shadow-sm space-y-4">
-              <h3 className="text-base font-bold text-gray-900">Enroll Expectant Mother Clinical File</h3>
-              <form onSubmit={handleCreateWoman} className="space-y-3 text-sm">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Select User Account *</label>
-                    <select
-                      value={newWomanForm.userId}
-                      onChange={(e) => {
-                        const selUser = womenUsers.find((u) => u._id === e.target.value);
-                        setNewWomanForm({
-                          ...newWomanForm,
-                          userId: e.target.value,
-                          name: selUser ? selUser.name : '',
-                          phone: selUser?.phone || newWomanForm.phone,
-                        });
-                      }}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                      required
-                    >
-                      <option value="">-- Choose registered account --</option>
-                      {womenUsers.map((u) => (
-                        <option key={u._id} value={u._id}>
-                          {u.name} ({u.email})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Mother Age (Years) *</label>
-                    <input
-                      type="number"
-                      placeholder="e.g. 25"
-                      value={newWomanForm.age}
-                      onChange={(e) => setNewWomanForm({ ...newWomanForm, age: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Contact Phone *</label>
-                    <input
-                      type="tel"
-                      placeholder="e.g. 9876543210"
-                      value={newWomanForm.phone}
-                      onChange={(e) => setNewWomanForm({ ...newWomanForm, phone: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Pregnancy Week</label>
-                    <input
-                      type="number"
-                      placeholder="e.g. 16"
-                      value={newWomanForm.pregnancyWeek}
-                      onChange={(e) => setNewWomanForm({ ...newWomanForm, pregnancyWeek: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Estimated Due Date</label>
-                    <input
-                      type="date"
-                      value={newWomanForm.expectedDeliveryDate}
-                      onChange={(e) => setNewWomanForm({ ...newWomanForm, expectedDeliveryDate: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Blood Group</label>
-                    <select
-                      value={newWomanForm.bloodGroup}
-                      onChange={(e) => setNewWomanForm({ ...newWomanForm, bloodGroup: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                    >
-                      <option value="A+">A+</option>
-                      <option value="A-">A-</option>
-                      <option value="B+">B+</option>
-                      <option value="B-">B-</option>
-                      <option value="O+">O+</option>
-                      <option value="O-">O-</option>
-                      <option value="AB+">AB+</option>
-                      <option value="AB-">AB-</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Assign Health Worker</label>
-                    <select
-                      value={newWomanForm.assignedWorker}
-                      onChange={(e) => setNewWomanForm({ ...newWomanForm, assignedWorker: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                    >
-                      <option value="">-- Optional: Assign worker --</option>
-                      {workers.filter((w) => w.isActive !== false).map((w) => (
-                        <option key={w._id} value={w._id}>
-                          {w.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Residential Address</label>
-                  <input
-                    type="text"
-                    placeholder="Village / Ward / Street address"
-                    value={newWomanForm.address}
-                    onChange={(e) => setNewWomanForm({ ...newWomanForm, address: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg text-xs transition shadow-sm"
-                >
-                  Create Clinical Profile
-                </button>
-              </form>
-            </div>
-
-            {/* List & Search */}
-            <div className="bg-white rounded-2xl border border-pink-100 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center space-x-2">
-                  <h3 className="font-bold text-gray-900">Enrolled Expectant Mothers</h3>
-                  <span className="text-xs text-gray-500">({filteredWomen.length} found)</span>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search mothers by name, phone, or address..."
-                  value={womanSearch}
-                  onChange={(e) => setWomanSearch(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-full sm:w-72 focus:ring-2 focus:ring-pink-400"
-                />
-              </div>
-
-              {filteredWomen.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-100">
-                      <tr>
-                        <th className="p-3">Mother Name</th>
-                        <th className="p-3">Age & Phone</th>
-                        <th className="p-3">Week / Blood Group</th>
-                        <th className="p-3">Assigned Worker</th>
-                        <th className="p-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredWomen.map((w) => (
-                        <tr key={w._id} className="hover:bg-pink-50/30 transition">
-                          <td className="p-3 font-semibold text-gray-800">
-                            {w.name || w.user?.name}
-                            <span className="block text-[10px] text-gray-400 font-normal">{w.address || 'No address'}</span>
-                          </td>
-                          <td className="p-3">
-                            {w.age} yrs • {w.phone || w.user?.phone || 'N/A'}
-                          </td>
-                          <td className="p-3">
-                            <span className="font-bold text-purple-700">Wk {w.pregnancyWeek || 'N/A'}</span> • {w.bloodGroup || 'N/A'}
-                          </td>
-                          <td className="p-3">
-                            <select
-                              value={w.assignedWorker?._id || 'unassigned'}
-                              onChange={(e) => handleAssignWorker(w._id, e.target.value)}
-                              className="border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-teal-400"
-                            >
-                              <option value="unassigned">-- Unassigned --</option>
-                              {workers.filter((worker) => worker.isActive !== false).map((worker) => (
-                                <option key={worker._id} value={worker._id}>
-                                  {worker.name}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="p-3 text-right">
-                            <button
-                              onClick={() => handleDeleteWoman(w._id, w.name || w.user?.name)}
-                              className="text-red-600 hover:text-red-800 font-medium hover:underline text-xs"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="py-8 text-center text-xs text-gray-500">
-                  No maternal health records match your search filter.
-                </div>
-              )}
             </div>
           </div>
         )}
 
-        {/* TAB 3: WORKERS MANAGEMENT */}
+        {/* TAB 3: Health Worker Accounts */}
         {activeTab === 'workers' && (
           <div className="space-y-6">
-            {/* Create Worker Card */}
-            <div className="bg-white rounded-2xl p-6 border border-teal-100 shadow-sm space-y-4">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Add Authorized Health Worker</h3>
-                <p className="text-xs text-gray-500">
-                  Worker accounts have field privileges to schedule appointments and document antenatal care.
-                </p>
-              </div>
+            {/* Create Worker Account Form */}
+            <div className="bg-white rounded-3xl p-6 border border-teal-100 shadow-sm space-y-4">
+              <h3 className="font-bold text-gray-900 text-sm">Provision Authorized Health Worker Account</h3>
 
-              <form onSubmit={handleCreateWorker} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
+              <form onSubmit={handleCreateWorker} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Worker Name *</label>
+                  <label className="block text-gray-600 font-bold mb-1">Full Name *</label>
                   <input
                     type="text"
-                    placeholder="e.g. Sister Meena"
+                    required
+                    placeholder="Sister Asha Name"
                     value={newWorkerForm.name}
                     onChange={(e) => setNewWorkerForm({ ...newWorkerForm, name: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-teal-400"
-                    required
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Worker Email *</label>
+                  <label className="block text-gray-600 font-bold mb-1">Email Address *</label>
                   <input
                     type="email"
-                    placeholder="worker@maacare.org"
+                    required
+                    placeholder="asha@maacare.org"
                     value={newWorkerForm.email}
                     onChange={(e) => setNewWorkerForm({ ...newWorkerForm, email: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-teal-400"
-                    required
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Worker Phone</label>
+                  <label className="block text-gray-600 font-bold mb-1">Phone Number</label>
                   <input
-                    type="tel"
-                    placeholder="e.g. 9876543211"
+                    type="text"
+                    placeholder="98XXXXXXXX"
                     value={newWorkerForm.phone}
                     onChange={(e) => setNewWorkerForm({ ...newWorkerForm, phone: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-teal-400"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Initial Password *</label>
+                  <label className="block text-gray-600 font-bold mb-1">Initial Password *</label>
                   <input
                     type="password"
+                    required
+                    minLength={6}
                     placeholder="Min 6 characters"
                     value={newWorkerForm.password}
                     onChange={(e) => setNewWorkerForm({ ...newWorkerForm, password: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-teal-400"
-                    required
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
                   />
                 </div>
-                <div className="sm:col-span-4 flex justify-end">
+
+                <div className="sm:col-span-4 flex justify-end pt-2">
                   <button
                     type="submit"
-                    className="px-6 py-2 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg text-xs transition shadow-sm"
+                    className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl shadow-sm"
                   >
-                    Add Health Worker
+                    Create Worker Credentials
                   </button>
                 </div>
               </form>
             </div>
 
-            {/* Workers Table with Search & Status Toggle */}
-            <div className="bg-white rounded-2xl border border-teal-100 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Workers Directory Table */}
+            <div className="bg-white rounded-3xl p-6 border border-teal-100 shadow-sm space-y-4">
+              <h3 className="font-bold text-gray-900 text-base">Authorized Health Workers</h3>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-gray-50 text-gray-500 uppercase font-semibold">
+                    <tr>
+                      <th className="p-3">Worker Name</th>
+                      <th className="p-3">Email</th>
+                      <th className="p-3">Phone</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredWorkers.map((worker) => (
+                      <tr key={worker._id} className="hover:bg-gray-50">
+                        <td className="p-3 font-bold text-gray-900">{worker.name}</td>
+                        <td className="p-3 text-gray-600">{worker.email}</td>
+                        <td className="p-3 text-gray-600">{worker.phone || '—'}</td>
+                        <td className="p-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                              worker.isActive ? 'bg-teal-100 text-teal-800' : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {worker.isActive ? 'Active' : 'Deactivated'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() => handleToggleWorkerStatus(worker)}
+                            className={`px-3 py-1 rounded-xl font-bold ${
+                              worker.isActive
+                                ? 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                                : 'bg-teal-50 text-teal-700 hover:bg-teal-100'
+                            }`}
+                          >
+                            {worker.isActive ? 'Deactivate' : 'Reactivate'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Broadcast Announcement Modal */}
+        {showBroadcastModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+            <div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-100">
                 <div className="flex items-center space-x-2">
-                  <h3 className="font-bold text-gray-900">Current Health Workers</h3>
-                  <span className="text-xs text-gray-500">({filteredWorkers.length} total)</span>
+                  <Send className="w-5 h-5 text-purple-600" />
+                  <h3 className="font-black text-gray-900 text-base">Broadcast Announcement</h3>
                 </div>
-                <input
-                  type="text"
-                  placeholder="Search workers by name or email..."
-                  value={workerSearch}
-                  onChange={(e) => setWorkerSearch(e.target.value)}
-                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-full sm:w-64 focus:ring-2 focus:ring-teal-400"
-                />
+                <button
+                  onClick={() => setShowBroadcastModal(false)}
+                  className="p-1 rounded-full text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {filteredWorkers.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-100">
-                      <tr>
-                        <th className="p-3">Worker Name</th>
-                        <th className="p-3">Email Address</th>
-                        <th className="p-3">Contact</th>
-                        <th className="p-3">Status</th>
-                        <th className="p-3 text-right">Account Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredWorkers.map((worker) => (
-                        <tr key={worker._id} className="hover:bg-teal-50/20 transition">
-                          <td className="p-3 font-semibold text-gray-800">
-                            👩‍⚕️ {worker.name}
-                          </td>
-                          <td className="p-3 text-teal-800 font-medium">
-                            {worker.email}
-                          </td>
-                          <td className="p-3 text-gray-500">
-                            {worker.phone || 'No phone'}
-                          </td>
-                          <td className="p-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                worker.isActive !== false
-                                  ? 'bg-green-100 text-green-800'
-                                  : 'bg-red-100 text-red-800'
-                              }`}
-                            >
-                              {worker.isActive !== false ? 'ACTIVE' : 'DEACTIVATED'}
-                            </span>
-                          </td>
-                          <td className="p-3 text-right">
-                            <button
-                              onClick={() => handleToggleWorkerStatus(worker)}
-                              className={`text-xs font-semibold px-3 py-1 rounded transition ${
-                                worker.isActive !== false
-                                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                                  : 'bg-green-50 text-green-700 hover:bg-green-100'
-                              }`}
-                            >
-                              {worker.isActive !== false ? 'Deactivate' : 'Reactivate'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <form onSubmit={handleBroadcast} className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block text-gray-700 font-bold mb-1">Target Audience</label>
+                  <select
+                    value={broadcastForm.targetRole}
+                    onChange={(e) => setBroadcastForm({ ...broadcastForm, targetRole: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  >
+                    <option value="all">All Platform Users</option>
+                    <option value="woman">Pregnant Mothers Only</option>
+                    <option value="worker">Health Workers Only</option>
+                  </select>
                 </div>
-              ) : (
-                <div className="py-8 text-center text-xs text-gray-500">
-                  No health workers found matching search.
+
+                <div>
+                  <label className="block text-gray-700 font-bold mb-1">Announcement Title *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Free Calcium Supplement Distribution Camp"
+                    value={broadcastForm.title}
+                    onChange={(e) => setBroadcastForm({ ...broadcastForm, title: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  />
                 </div>
-              )}
+
+                <div>
+                  <label className="block text-gray-700 font-bold mb-1">Announcement Message *</label>
+                  <textarea
+                    required
+                    rows={3}
+                    placeholder="Details about camp dates, venue, and required documents..."
+                    value={broadcastForm.message}
+                    onChange={(e) => setBroadcastForm({ ...broadcastForm, message: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl"
+                  />
+                </div>
+
+                <div className="flex justify-end space-x-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowBroadcastModal(false)}
+                    className="px-4 py-2 border border-gray-200 rounded-xl font-bold text-gray-600"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={broadcasting}
+                    className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50"
+                  >
+                    {broadcasting ? 'Dispatching...' : 'Dispatch to Inboxes'}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
       </main>
     </div>
   );
-};
-
-export default AdminDashboard;
+}

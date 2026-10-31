@@ -17,27 +17,31 @@ const protect = asyncHandler(async (req, res, next) => {
       }
       if (req.user.isActive === false) {
         res.status(403);
-        throw new Error('User account has been deactivated');
+        throw new Error('User account has been deactivated. Please contact your administrator.');
       }
-      next();
+      return next();
     } catch (error) {
-      console.error(error);
+      if (res.statusCode === 403) {
+        throw error;
+      }
+      console.error('Auth verification error:', error.message);
       res.status(401);
       throw new Error('Not authorized, token failed');
     }
   }
+
   if (!token) {
     res.status(401);
-    throw new Error('Not authorized, no token');
+    throw new Error('Not authorized, no token provided');
   }
 });
 
-// Role based access
+// Role-based access control
 const authorize = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    if (!req.user || !roles.includes(req.user.role)) {
       res.status(403);
-      throw new Error('User role not authorized');
+      throw new Error(`Forbidden: User role '${req.user?.role || 'anonymous'}' is not authorized to access this resource`);
     }
     next();
   };

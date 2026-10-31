@@ -11,11 +11,13 @@ const getMyRecord = asyncHandler(async (req, res) => {
   const woman = await Woman.findOne({ user: req.user._id })
     .populate('assignedWorker', 'name email phone isActive');
 
+  // Compute start of today once for overdue sync and next-appointment query
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
   let checkups = [];
   if (woman) {
     // Automatically update overdue status for this woman's appointments
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
     await Checkup.updateMany(
       { woman: woman._id, status: 'Upcoming', date: { $lt: startOfToday } },
       { $set: { status: 'Overdue' } }
@@ -24,9 +26,15 @@ const getMyRecord = asyncHandler(async (req, res) => {
     checkups = await Checkup.find({ woman: woman._id }).sort({ date: -1 });
   }
 
-  // Identify next upcoming appointment and any overdue follow-up alerts
-  const upcomingAppointments = checkups.filter((c) => c.status === 'Upcoming');
-  const nextAppointment = upcomingAppointments.length > 0 ? upcomingAppointments[upcomingAppointments.length - 1] : null;
+  // Correct next appointment: earliest upcoming from today (ascending sort, first result)
+  const nextAppointment = woman
+    ? await Checkup.findOne({
+        woman: woman._id,
+        status: 'Upcoming',
+        date: { $gte: startOfToday },
+      }).sort({ date: 1 })
+    : null;
+
   const overdueAppointments = checkups.filter((c) => c.status === 'Overdue');
 
   res.json({

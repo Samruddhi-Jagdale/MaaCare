@@ -1,6 +1,7 @@
 // routes/worker.js
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
+const { validateCheckupCreate } = require('../middleware/validationMiddleware');
 const {
   getAssignedWomen,
   getWomanDetails,
@@ -17,7 +18,7 @@ router.use(protect, authorize('worker'));
 router.get('/women', getAssignedWomen);
 router.get('/women/:id', getWomanDetails);
 router.get('/appointments', getWorkerAppointments);
-router.post('/checkups', addCheckup);
+router.post('/checkups', validateCheckupCreate, addCheckup);
 router.put('/checkups/:id', updateCheckup);
 
 module.exports = router;
