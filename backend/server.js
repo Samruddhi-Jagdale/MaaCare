@@ -23,26 +23,26 @@ app.use(helmet({
 }));
 
 // CORS Configuration
+// CORS Configuration
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:3000',
+  'https://maa-care-one.vercel.app',
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+    if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    return callback(new Error('CORS policy does not allow access from this origin'), false);
+
+    console.error('Blocked CORS origin:', origin);
+    return callback(new Error('CORS policy does not allow access from this origin'));
   },
   credentials: true,
 }));
-
-app.use(express.json());
-app.use('/api', apiLimiter);
 
 // Connect to MongoDB
 // const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/maacare';
